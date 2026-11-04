@@ -167,8 +167,8 @@ table.mtx{font-size:13px;min-width:980px}.mtx th,.mtx td{white-space:nowrap}.mtx
     <h1>Masuk</h1>
     <p class="sub">Rekap Kinerja Mantri Tumbuh 2026</p>
     <form id="lf" autocomplete="on">
-      <label>Email<input id="lem" type="email" autocomplete="username" required placeholder="nama@gmail.com"></label>
-      <label>Password<span class="pw"><input id="lpw" type="password" autocomplete="current-password" required><button class="pwt" id="pwt" type="button">Lihat</button></span></label>
+      <label>Email<input id="lem" type="email" autocomplete="username" required autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="nama@gmail.com"></label>
+      <label>Password<span class="pw"><input id="lpw" type="password" autocomplete="current-password" required autocapitalize="off" autocorrect="off" spellcheck="false"><button class="pwt" id="pwt" type="button">Lihat</button></span></label>
       <div id="le" role="alert"></div>
       <button class="btn or" type="submit">Masuk</button>
     </form>
@@ -255,12 +255,29 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 /* ===== SUPABASE: isi 3 baris ini ===== */
 const SUPABASE_URL='https://gmkdffhkgcddxcemxkvw.supabase.co';      // contoh: https://abcdxyz.supabase.co
 const SUPABASE_KEY='sb_publishable_EX9P_AYtY48dF5cx0qVOBw_6XF36vIE';         // anon / publishable key (BUKAN service_role)
-const ADMIN_EMAILS=['mtaufiq1978@gmail.com']; // email yang boleh buka Input Data; user lain = visitor
+const ADMIN_EMAILS=['mtaufiqalwi1978@gmail.com']; // email yang boleh buka Input Data; user lain = visitor
 const SES='mantri_tok';
 let isAdmin=false,data=[];
 const KEY='rekap_kinerja_mantri_tumbuh_v1';
-function persist(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){alert('Data tidak bisa disimpan di browser ini: '+e.message)}}
-function load(){try{data=JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){data=[]}data.sort((a,b)=>a.per.localeCompare(b.per))}
+/* ===== DATA REKAP: tersimpan di tabel Supabase "rekap" ===== */
+async function api(path,opt={},retry=true){
+  const r=await fetch(SUPABASE_URL+path,{...opt,headers:{apikey:SUPABASE_KEY,Authorization:'Bearer '+sessionStorage.getItem(SES),'Content-Type':'application/json',...(opt.headers||{})}});
+  if(r.status===401&&retry){const rt=sessionStorage.getItem('mantri_rt');if(rt){const x=await sb('token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:rt})});if(x.ok){const j=await x.json();sessionStorage.setItem(SES,j.access_token);sessionStorage.setItem('mantri_rt',j.refresh_token);return api(path,opt,false)}}}
+  if(!r.ok)throw new Error(r.status+' '+(await r.text()).slice(0,140));
+  return r}
+let srv=new Map();const dk=d=>d.pn+'|'+d.per,norm=d=>JSON.stringify([d.pn,d.per,d.nama,d.unit,d.kaunit,+d.kpi]);
+async function load(){
+  try{data=(await(await api('/rest/v1/rekap?select=pn,per,nama,unit,kaunit,kpi')).json()).map(d=>({...d,kpi:+d.kpi}))}catch(e){data=[];alert('Gagal memuat data: '+e.message)}
+  srv=new Map(data.map(d=>[dk(d),norm(d)]));
+  if(isAdmin&&!data.length){try{const o=JSON.parse(localStorage.getItem(KEY)||'[]');if(o.length){data=o;await persist()}}catch(e){}}
+  data.sort((a,b)=>a.per.localeCompare(b.per))}
+async function persist(){
+  const cur=new Set(data.map(dk)),up=data.filter(d=>srv.get(dk(d))!==norm(d)).map(d=>({pn:d.pn,per:d.per,nama:d.nama,unit:d.unit,kaunit:d.kaunit,kpi:d.kpi})),del=[...srv.keys()].filter(k=>!cur.has(k));
+  try{
+    if(up.length)await api('/rest/v1/rekap?on_conflict=pn,per',{method:'POST',headers:{Prefer:'resolution=merge-duplicates'},body:JSON.stringify(up)});
+    for(const k of del){const i=k.indexOf('|');await api('/rest/v1/rekap?pn=eq.'+encodeURIComponent(k.slice(0,i))+'&per=eq.'+encodeURIComponent(k.slice(i+1)),{method:'DELETE'})}
+    srv=new Map(data.map(d=>[dk(d),norm(d)]))
+  }catch(e){alert('Gagal menyimpan ke Supabase: '+e.message)}}
 const now=new Date();
 $('#bln').innerHTML=BL.map((b,i)=>`<option value="${i+1}">${b}</option>`).join('');
 $('#thn').innerHTML=[2024,2025,2026,2027,2028].map(y=>`<option>${y}</option>`).join('');
@@ -395,11 +412,15 @@ function boom(){if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
 function tick(){cx.clearRect(0,0,cv.width,cv.height);P=P.filter(p=>p.l>0&&p.y<innerHeight+30);
   P.forEach(p=>{p.vy+=.35;p.vx*=.99;p.x+=p.vx;p.y+=p.vy;p.r+=p.vr;p.l--;cx.save();cx.translate(p.x,p.y);cx.rotate(p.r);cx.fillStyle=p.c;cx.fillRect(-p.s/2,-p.s/3,p.s,p.s*.6);cx.restore()});
   if(P.length)requestAnimationFrame(tick);else run=false}
-/* ===== KENANGAN (foto disimpan di IndexedDB browser) ===== */
-function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('kenangan_mantri_v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('m',{keyPath:'id'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
-async function mAll(){const d=await idb();return new Promise((res,rej)=>{const q=d.transaction('m').objectStore('m').getAll();q.onsuccess=()=>res(q.result.sort((a,b)=>b.date.localeCompare(a.date)||b.ts-a.ts));q.onerror=()=>rej(q.error)})}
-async function mPut(o){const d=await idb();return new Promise((res,rej)=>{const t=d.transaction('m','readwrite');t.objectStore('m').put(o);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)})}
-async function mDel(id){const d=await idb();return new Promise((res,rej)=>{const t=d.transaction('m','readwrite');t.objectStore('m').delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)})}
+/* ===== KENANGAN (foto di Supabase Storage, daftar di tabel kenangan) ===== */
+const PUB=SUPABASE_URL+'/storage/v1/object/public/kenangan/';
+async function mAll(){return(await api('/rest/v1/kenangan?select=*&order=date.desc,ts.desc')).json()}
+async function mPut(o){const path=o.id+'.jpg';
+  await api('/storage/v1/object/kenangan/'+path,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:o.img});
+  try{await api('/rest/v1/kenangan',{method:'POST',body:JSON.stringify({id:o.id,date:o.date,descr:o.desc,path,ts:o.ts})})}
+  catch(e){await api('/storage/v1/object/kenangan/'+path,{method:'DELETE'}).catch(()=>{});throw e}}
+async function mDel(id){const rows=await(await api('/rest/v1/kenangan?id=eq.'+encodeURIComponent(id)+'&select=path',{method:'DELETE',headers:{Prefer:'return=representation'}})).json();
+  for(const x of rows)await api('/storage/v1/object/kenangan/'+x.path,{method:'DELETE'}).catch(()=>{})}
 function shrink(file,max=1280){return new Promise((res,rej)=>{const u=URL.createObjectURL(file),im=new Image();
   im.onload=()=>{const k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?res(b):rej(new Error('Gagal memproses foto')),'image/jpeg',.82)};
   im.onerror=()=>{URL.revokeObjectURL(u);rej(new Error('File tidak dapat dibaca sebagai gambar'))};im.src=u})}
@@ -407,9 +428,9 @@ const fmtD=d=>{const [y,m,dd]=d.split('-');return +dd+' '+BL[+m-1]+' '+y};
 let mUrls=[];
 async function rMem(){
   mUrls.forEach(u=>URL.revokeObjectURL(u));mUrls=[];const g=$('#memGrid');let list=[];
-  try{list=await mAll()}catch(e){g.innerHTML='<div class="empty">Penyimpanan foto tidak tersedia di browser ini.</div>';return}
-  g.innerHTML=list.length?list.map(m=>{const u=URL.createObjectURL(m.img);mUrls.push(u);
-    return `<figure class="mem"><img src="${u}" alt="${esc(m.desc||'Kenangan')}" data-big="${u}"><figcaption><small>${esc(fmtD(m.date))}</small>${m.desc?`<p>${esc(m.desc)}</p>`:''}${isAdmin?`<button class="btn gh" data-mdel="${esc(m.id)}">Hapus</button>`:''}</figcaption></figure>`}).join('')
+  try{list=await mAll()}catch(e){g.innerHTML='<div class="empty">Gagal memuat foto. Cek koneksi internet.</div>';return}
+  g.innerHTML=list.length?list.map(m=>{const u=PUB+m.path;
+    return `<figure class="mem"><img src="${u}" alt="${esc(m.descr||'Kenangan')}" data-big="${u}"><figcaption><small>${esc(fmtD(m.date))}</small>${m.descr?`<p>${esc(m.descr)}</p>`:''}${isAdmin?`<button class="btn gh" data-mdel="${esc(m.id)}">Hapus</button>`:''}</figcaption></figure>`}).join('')
     :`<div class="empty"><b>Belum ada kenangan.</b><br>${isAdmin?'Tambahkan foto pertama lewat form di atas.':'Kenangan akan tampil setelah admin menambahkannya.'}</div>`;
 }
 $('#mf').addEventListener('submit',async e=>{e.preventDefault();if(!isAdmin)return;
@@ -428,17 +449,17 @@ $('#mDate').value=new Date().toISOString().slice(0,10);
 /* ===== MUSIK & ANIMASI LOGIN ===== */
 /* ===== LAGU: ganti dengan URL publik dari Supabase Storage ===== */
 const MUSIC_URL='https://gmkdffhkgcddxcemxkvw.supabase.co/storage/v1/object/public/musik%20bri/Mars%20BRI%20terbaru%202022%20dengan%20lirik.mp3';
-const au=$('#mars'),sc=$('#scene');au.src=MUSIC_URL;let fd;
+const au=$('#mars'),sc=$('#scene');au.src=MUSIC_URL;let fd,quiet=false;
 function fade(to){clearInterval(fd);fd=setInterval(()=>{const v=au.volume;au.volume=Math.min(1,Math.max(0,v+(to>v?.04:-.04)));if(Math.abs(to-au.volume)<.04){au.volume=to;clearInterval(fd);if(!to)au.pause()}},70)}
 function music(on){
-  try{localStorage.setItem('mantri_music',on?'1':'0')}catch(e){}
-  if(on){au.volume=0;au.play().then(()=>fade(.6)).catch(()=>{$('#musT').checked=false;$('#mmsg').textContent='Musik gagal diputar. Cek alamat MUSIC_URL di file HTML.'})}
+    if(on){au.volume=0;au.play().then(()=>fade(.6)).catch(()=>{$('#musT').checked=false;$('#mmsg').textContent='Musik gagal diputar. Cek alamat MUSIC_URL di file HTML.'})}
   else fade(0)}
 function syncM(){const p=!au.paused;document.body.classList.toggle('mplay',p);$('#mfab').setAttribute('aria-pressed',p);if(p)$('#musT').checked=true}
-au.addEventListener('play',syncM);au.addEventListener('pause',()=>{syncM();$('#musT').checked=false});
-$('#musT').addEventListener('change',e=>music(e.target.checked));
+au.addEventListener('play',syncM);au.addEventListener('pause',()=>{syncM();if(!quiet)$('#musT').checked=false});
+$('#musT').addEventListener('change',e=>{try{localStorage.setItem('mantri_music',e.target.checked?'1':'0')}catch(x){}music(e.target.checked)});
 $('#mfab').addEventListener('click',()=>music(au.paused));
-try{if(localStorage.getItem('mantri_music')==='1'){$('#musT').checked=true;$('#mmsg').textContent='Akan diputar saat kamu masuk'}}catch(e){}
+$('#musT').checked=true;$('#mmsg').textContent='Otomatis diputar setelah berhasil masuk';
+try{if(localStorage.getItem('mantri_music')==='0'){$('#musT').checked=false;$('#mmsg').textContent='Musik dimatikan'}}catch(e){}
 $('#pwt').addEventListener('click',()=>{const t=$('#lpw').type==='password';$('#lpw').type=t?'text':'password';$('#pwt').textContent=t?'Sembunyi':'Lihat'});
 const setP=(x,y)=>{sc.style.setProperty('--mx',x);sc.style.setProperty('--my',y)};
 sc.addEventListener('pointermove',e=>{const r=sc.getBoundingClientRect();setP(((e.clientX-r.left)/r.width-.5)*2,((e.clientY-r.top)/r.height-.5)*2)});
@@ -453,10 +474,10 @@ sc.addEventListener('click',e=>{const t=e.target.closest('.ppl,.sign');if(!t)ret
 sc.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.closest('.ppl,.sign')){e.preventDefault();const b=e.target.getBoundingClientRect();e.target.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:b.left+b.width/2,clientY:b.top}))}});
 
 /* ===== LOGIN & AKSES ===== */
-function enter(role){
+async function enter(role){
   isAdmin=role==='admin';$('#login').hidden=true;$('#app').hidden=false;$('#mfab').hidden=false;
   $('#navInput').hidden=!isAdmin;$('#memAdmin').hidden=!isAdmin;
-  load();fit();all();
+  await load();fit();all();
   const h=location.hash.slice(1);
   go(['achievement','outstanding','poor','perpn','kenangan','input'].includes(h)?h:'achievement');
 }
@@ -465,17 +486,17 @@ const sb=(path,opt={})=>fetch(SUPABASE_URL+'/auth/v1/'+path,{...opt,headers:{api
 $('#lf').addEventListener('submit',async e=>{e.preventDefault();
   const em=$('#lem').value.trim(),pw=$('#lpw').value,btn=e.target.querySelector('button[type=submit]'),le=$('#le');
   if(SUPABASE_URL.startsWith('ISI')){le.textContent='Isi SUPABASE_URL dan SUPABASE_KEY di file HTML dulu.';return}
-  if($('#musT').checked&&au.paused)music(true);
+  const wantM=$('#musT').checked;let ok=false;if(wantM&&au.paused){au.volume=0;au.play().catch(()=>{})}
   btn.disabled=true;le.textContent='';
   try{
     const r=await sb('token?grant_type=password',{method:'POST',body:JSON.stringify({email:em,password:pw})});
     const j=await r.json().catch(()=>({}));
     if(!r.ok||!j.access_token){le.textContent=/invalid login/i.test(JSON.stringify(j))?'Email atau password salah.':'Gagal masuk: '+(j.error_description||j.msg||j.message||r.status);return}
-    $('#lpw').value='';
-    try{sessionStorage.setItem(SES,j.access_token)}catch(x){}
+    $('#lpw').value='';ok=true;if(wantM)music(true);
+    try{sessionStorage.setItem(SES,j.access_token);sessionStorage.setItem('mantri_rt',j.refresh_token||'')}catch(x){}
     enter(roleOf(j.user&&j.user.email||em));
   }catch(x){le.textContent='Tidak bisa terhubung ke Supabase. Cek SUPABASE_URL dan koneksi internet.'}
-  finally{btn.disabled=false}});
+  finally{btn.disabled=false;if(!ok&&wantM){quiet=true;au.pause();setTimeout(()=>quiet=false,300)}}});
 (async function(){let t=null;try{t=sessionStorage.getItem(SES)}catch(x){}
   if(!t||SUPABASE_URL.startsWith('ISI'))return;
   try{const r=await sb('user',{headers:{Authorization:'Bearer '+t}});if(r.ok){const u=await r.json();enter(roleOf(u.email));return}}catch(x){}
