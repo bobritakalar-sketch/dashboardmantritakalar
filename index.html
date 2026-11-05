@@ -105,7 +105,8 @@ table.mtx{font-size:13px;min-width:980px}.mtx th,.mtx td{white-space:nowrap}.mtx
 @keyframes pop{from{transform:translate(-50%,-90%) scale(.7);opacity:0}}
 .coin{position:absolute;z-index:5;width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#FFE58A,#F58220);pointer-events:none;animation:cn .9s ease-out forwards}
 @keyframes cn{to{transform:translate(var(--dx),var(--dy));opacity:0}}
-#topbar{display:flex;justify-content:flex-end;padding:8px 16px;padding-top:calc(8px + env(safe-area-inset-top,0px));background:var(--navy)}
+#topbar [hidden]{display:none!important}
+#topbar{display:flex;gap:10px;justify-content:flex-end;padding:8px 16px;padding-top:calc(8px + env(safe-area-inset-top,0px));background:var(--navy)}
 #out{background:var(--or);color:#fff;border:0;border-radius:99px;padding:8px 18px;font-weight:700;cursor:pointer}
 .panel{display:grid;place-items:center;padding:28px 24px}.box{width:100%;max-width:380px}
 .brand{display:flex;align-items:center;gap:10px;font:800 15px 'Bricolage Grotesque';color:var(--blue);margin-bottom:22px}
@@ -183,7 +184,7 @@ table.mtx{font-size:13px;min-width:980px}.mtx th,.mtx td{white-space:nowrap}.mtx
 <button id="mfab" type="button" hidden aria-label="Putar atau jeda musik" aria-pressed="false"><i class="eq"><b></b><b></b><b></b></i></button>
 <div id="lb" hidden><img alt="Foto kenangan"></div>
 <div id="app" hidden>
-<div id="topbar"><button id="out" type="button">Keluar</button></div>
+<div id="topbar"><button class="btn" id="mig" type="button" hidden>Pindahkan data lama</button><button id="out" type="button">Keluar</button></div>
 <header class="hero">
   <h1>REKAP KINERJA<br>MANTRI TUMBUH</h1>
   <p>Pilih periode untuk melihat peringkat kinerja mantri berdasarkan nilai KPI.</p>
@@ -419,7 +420,8 @@ function tick(){cx.clearRect(0,0,cv.width,cv.height);P=P.filter(p=>p.l>0&&p.y<in
   if(P.length)requestAnimationFrame(tick);else run=false}
 /* ===== KENANGAN (foto di Supabase Storage, daftar di tabel kenangan) ===== */
 const PUB=SUPABASE_URL+'/storage/v1/object/public/kenangan/';
-async function mAll(){return(await api('/rest/v1/kenangan?select=*&order=ord.asc.nullslast,date.desc,ts.desc')).json()}
+let hasOrd=true;
+async function mAll(){try{const r=await api('/rest/v1/kenangan?select=*&order=ord.asc.nullslast,date.desc,ts.desc');hasOrd=true;return r.json()}catch(e){hasOrd=false;return(await api('/rest/v1/kenangan?select=*&order=date.desc,ts.desc')).json()}}
 async function mPut(o){const path=o.id+'.jpg';
   await api('/storage/v1/object/kenangan/'+path,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:o.img});
   try{await api('/rest/v1/kenangan',{method:'POST',body:JSON.stringify({id:o.id,date:o.date,descr:o.desc,path,ts:o.ts,ord:o.ord})})}
@@ -440,13 +442,29 @@ async function rMem(){
 }
 $('#mf').addEventListener('submit',async e=>{e.preventDefault();if(!isAdmin)return;
   const f=$('#mFile').files[0],mm=$('#mMsg');if(!f)return;mm.textContent='Menyimpan…';
-  try{const img=await shrink(f);await mPut({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:$('#mDate').value,desc:$('#mDesc').value.trim(),img,ts:Date.now(),ord:mList.length?Math.min(...mList.map(m=>m.ord??0))-1:0});
+  try{const img=await shrink(f);await mPut({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:$('#mDate').value,desc:$('#mDesc').value.trim(),img,ts:Date.now(),ord:hasOrd?(mList.length?Math.min(...mList.map(m=>m.ord??0))-1:0):undefined});
     $('#mf').reset();$('#mDate').value=new Date().toISOString().slice(0,10);mm.textContent='Kenangan tersimpan.';rMem()}
   catch(err){mm.textContent='Gagal menyimpan: '+err.message}});
 $('#memGrid').addEventListener('click',async e=>{
   const del=e.target.closest('[data-mdel]');
   if(del){if(!isAdmin)return;if(!confirm('Hapus kenangan ini?'))return;try{await mDel(del.dataset.mdel);rMem()}catch(err){alert('Gagal menghapus: '+err.message)}return}
   const im=e.target.closest('img[data-big]');if(im){$('#lb img').src=im.dataset.big;$('#lb').hidden=false}});
+/* ----- salin data & foto lama dari browser ini ke Supabase (tidak menghapus/menimpa apa pun) ----- */
+function oldPhotos(){return new Promise(res=>{const r=indexedDB.open('kenangan_mantri_v1',1);r.onupgradeneeded=()=>r.result.createObjectStore('m',{keyPath:'id'});
+  r.onsuccess=()=>{try{const q=r.result.transaction('m').objectStore('m').getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>res([])}catch(e){res([])}};r.onerror=()=>res([])})}
+$('#mig').addEventListener('click',async()=>{if(!isAdmin)return;
+  if(!confirm('Data dan foto lama yang tersimpan di browser ini akan DISALIN ke Supabase.\nYang sudah ada di Supabase tidak dihapus dan tidak ditimpa. Lanjutkan?'))return;
+  const b=$('#mig');b.disabled=true;b.textContent='Memindahkan…';let nr=0,nf=0,err='';
+  try{
+    let o=[];try{o=JSON.parse(localStorage.getItem(KEY)||'[]')}catch(e){}
+    const have=new Set(data.map(dk));const add=o.filter(d=>d&&d.pn&&d.per&&!have.has(dk(d)));
+    if(add.length){data=data.concat(add);data.sort((a,c)=>a.per.localeCompare(c.per));await persist();nr=add.length}
+    const ph=await oldPhotos(),ids=new Set((await mAll()).map(m=>m.id));
+    for(const x of ph){if(ids.has(x.id)||!x.img)continue;await mPut({id:x.id,date:x.date,desc:x.desc||'',img:x.img,ts:x.ts||Date.now()});nf++}
+  }catch(e){err='\nTerhenti karena: '+e.message}
+  b.disabled=false;b.textContent='Pindahkan data lama';
+  alert('Selesai. Data rekap dipindahkan: '+nr+' baris, foto dipindahkan: '+nf+'.'+(nr+nf===0&&!err?'\nTidak ada data lama baru di browser ini.':'')+err);
+  await load();all();rMem()});
 /* ----- atur susunan foto (geser) ----- */
 function setSort(on){mSort=on;$('#mEdit').hidden=on;$('#mSave').hidden=!on;$('#mCancel').hidden=!on;$('#mHint').textContent=on?'Geser foto ke posisi yang diinginkan, lalu klik Simpan susunan.':'';rMem()}
 $('#mEdit').onclick=()=>setSort(true);$('#mCancel').onclick=()=>setSort(false);
@@ -496,7 +514,7 @@ sc.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.cl
 /* ===== LOGIN & AKSES ===== */
 async function enter(role){
   isAdmin=role==='admin';$('#login').hidden=true;$('#app').hidden=false;$('#mfab').hidden=false;
-  $('#navInput').hidden=!isAdmin;$('#memAdmin').hidden=!isAdmin;$('#memTools').hidden=!isAdmin;
+  $('#navInput').hidden=!isAdmin;$('#memAdmin').hidden=!isAdmin;$('#memTools').hidden=!isAdmin;$('#mig').hidden=!isAdmin;
   await load();fit();all();
   const h=location.hash.slice(1);
   go(['achievement','outstanding','poor','perpn','kenangan','input'].includes(h)?h:'achievement');
