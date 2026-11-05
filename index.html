@@ -122,7 +122,7 @@ table.mtx{font-size:13px;min-width:980px}.mtx th,.mtx td{white-space:nowrap}.mtx
 .eq{display:inline-flex;align-items:flex-end;gap:3px;height:22px;flex:none}.eq b{width:4px;height:6px;border-radius:2px;background:var(--or)}
 .mplay .eq b{animation:eq .8s ease-in-out infinite alternate}.eq b:nth-child(2){animation-delay:.2s}.eq b:nth-child(3){animation-delay:.4s}
 @keyframes eq{to{height:22px}}
-#mfab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;width:52px;height:52px;border-radius:50%;border:0;background:var(--or);cursor:pointer;display:grid;place-items:center;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+#mfab{position:fixed;left:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;width:52px;height:52px;border-radius:50%;border:0;background:var(--or);cursor:pointer;display:grid;place-items:center;box-shadow:0 8px 20px rgba(0,0,0,.3)}
 #mfab .eq b{background:#fff}
 @media (max-width:820px){#login{grid-template-columns:1fr;grid-template-rows:minmax(320px,44vh) auto}.panel{align-items:start;padding-top:22px}}
 .memgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
@@ -131,6 +131,10 @@ table.mtx{font-size:13px;min-width:980px}.mtx th,.mtx td{white-space:nowrap}.mtx
 .mem figcaption{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
 .mem small{color:var(--or);font-weight:700}.mem p{margin:0;white-space:pre-wrap;word-break:break-word}
 .mem .btn{align-self:flex-start;margin-top:auto}
+.mtools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.mtools[hidden],.mtools [hidden]{display:none!important}
+.mem.sorting{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;outline:2px dashed var(--or);outline-offset:-2px}
+.mem.sorting img{pointer-events:none}.mem.sorting .btn{display:none}
+.mem.drag{opacity:.88;box-shadow:0 18px 40px rgba(0,0,0,.35);position:relative;z-index:20;cursor:grabbing}
 #lb{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.88);display:grid;place-items:center;padding:20px;cursor:zoom-out}
 #lb img{max-width:100%;max-height:100%;border-radius:12px}
 </style>
@@ -222,6 +226,7 @@ table.mtx{font-size:13px;min-width:980px}.mtx th,.mtx td{white-space:nowrap}.mtx
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="btn or" type="submit">Simpan kenangan</button><span id="mMsg" style="color:var(--mut)"></span></div>
       </form>
     </div>
+    <div class="mtools" id="memTools" hidden><button class="btn" id="mEdit" type="button">Atur susunan</button><button class="btn or" id="mSave" type="button" hidden>Simpan susunan</button><button class="btn gh" id="mCancel" type="button" hidden>Batal</button><span id="mHint" style="color:var(--mut)"></span></div>
     <div class="memgrid" id="memGrid"></div>
   </section>
   <section class="pg" id="input">
@@ -414,10 +419,10 @@ function tick(){cx.clearRect(0,0,cv.width,cv.height);P=P.filter(p=>p.l>0&&p.y<in
   if(P.length)requestAnimationFrame(tick);else run=false}
 /* ===== KENANGAN (foto di Supabase Storage, daftar di tabel kenangan) ===== */
 const PUB=SUPABASE_URL+'/storage/v1/object/public/kenangan/';
-async function mAll(){return(await api('/rest/v1/kenangan?select=*&order=date.desc,ts.desc')).json()}
+async function mAll(){return(await api('/rest/v1/kenangan?select=*&order=ord.asc.nullslast,date.desc,ts.desc')).json()}
 async function mPut(o){const path=o.id+'.jpg';
   await api('/storage/v1/object/kenangan/'+path,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:o.img});
-  try{await api('/rest/v1/kenangan',{method:'POST',body:JSON.stringify({id:o.id,date:o.date,descr:o.desc,path,ts:o.ts})})}
+  try{await api('/rest/v1/kenangan',{method:'POST',body:JSON.stringify({id:o.id,date:o.date,descr:o.desc,path,ts:o.ts,ord:o.ord})})}
   catch(e){await api('/storage/v1/object/kenangan/'+path,{method:'DELETE'}).catch(()=>{});throw e}}
 async function mDel(id){const rows=await(await api('/rest/v1/kenangan?id=eq.'+encodeURIComponent(id)+'&select=path',{method:'DELETE',headers:{Prefer:'return=representation'}})).json();
   for(const x of rows)await api('/storage/v1/object/kenangan/'+x.path,{method:'DELETE'}).catch(()=>{})}
@@ -425,23 +430,38 @@ function shrink(file,max=1280){return new Promise((res,rej)=>{const u=URL.create
   im.onload=()=>{const k=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?res(b):rej(new Error('Gagal memproses foto')),'image/jpeg',.82)};
   im.onerror=()=>{URL.revokeObjectURL(u);rej(new Error('File tidak dapat dibaca sebagai gambar'))};im.src=u})}
 const fmtD=d=>{const [y,m,dd]=d.split('-');return +dd+' '+BL[+m-1]+' '+y};
-let mUrls=[];
+let mUrls=[],mList=[],mSort=false;
 async function rMem(){
   mUrls.forEach(u=>URL.revokeObjectURL(u));mUrls=[];const g=$('#memGrid');let list=[];
-  try{list=await mAll()}catch(e){g.innerHTML='<div class="empty">Gagal memuat foto. Cek koneksi internet.</div>';return}
+  try{list=await mAll();mList=list}catch(e){g.innerHTML='<div class="empty">Gagal memuat foto. Cek koneksi internet.</div>';return}
   g.innerHTML=list.length?list.map(m=>{const u=PUB+m.path;
-    return `<figure class="mem"><img src="${u}" alt="${esc(m.descr||'Kenangan')}" data-big="${u}"><figcaption><small>${esc(fmtD(m.date))}</small>${m.descr?`<p>${esc(m.descr)}</p>`:''}${isAdmin?`<button class="btn gh" data-mdel="${esc(m.id)}">Hapus</button>`:''}</figcaption></figure>`}).join('')
+    return `<figure class="mem${mSort?' sorting':''}" data-id="${esc(m.id)}"><img src="${u}" alt="${esc(m.descr||'Kenangan')}" data-big="${u}"><figcaption><small>${esc(fmtD(m.date))}</small>${m.descr?`<p>${esc(m.descr)}</p>`:''}${isAdmin?`<button class="btn gh" data-mdel="${esc(m.id)}">Hapus</button>`:''}</figcaption></figure>`}).join('')
     :`<div class="empty"><b>Belum ada kenangan.</b><br>${isAdmin?'Tambahkan foto pertama lewat form di atas.':'Kenangan akan tampil setelah admin menambahkannya.'}</div>`;
 }
 $('#mf').addEventListener('submit',async e=>{e.preventDefault();if(!isAdmin)return;
   const f=$('#mFile').files[0],mm=$('#mMsg');if(!f)return;mm.textContent='Menyimpan…';
-  try{const img=await shrink(f);await mPut({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:$('#mDate').value,desc:$('#mDesc').value.trim(),img,ts:Date.now()});
+  try{const img=await shrink(f);await mPut({id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),date:$('#mDate').value,desc:$('#mDesc').value.trim(),img,ts:Date.now(),ord:mList.length?Math.min(...mList.map(m=>m.ord??0))-1:0});
     $('#mf').reset();$('#mDate').value=new Date().toISOString().slice(0,10);mm.textContent='Kenangan tersimpan.';rMem()}
   catch(err){mm.textContent='Gagal menyimpan: '+err.message}});
 $('#memGrid').addEventListener('click',async e=>{
   const del=e.target.closest('[data-mdel]');
   if(del){if(!isAdmin)return;if(!confirm('Hapus kenangan ini?'))return;try{await mDel(del.dataset.mdel);rMem()}catch(err){alert('Gagal menghapus: '+err.message)}return}
   const im=e.target.closest('img[data-big]');if(im){$('#lb img').src=im.dataset.big;$('#lb').hidden=false}});
+/* ----- atur susunan foto (geser) ----- */
+function setSort(on){mSort=on;$('#mEdit').hidden=on;$('#mSave').hidden=!on;$('#mCancel').hidden=!on;$('#mHint').textContent=on?'Geser foto ke posisi yang diinginkan, lalu klik Simpan susunan.':'';rMem()}
+$('#mEdit').onclick=()=>setSort(true);$('#mCancel').onclick=()=>setSort(false);
+$('#mSave').onclick=async()=>{const by=new Map(mList.map(m=>[m.id,m])),ids=[...$('#memGrid').children].map(x=>x.dataset.id).filter(Boolean);
+  try{await api('/rest/v1/kenangan?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates'},body:JSON.stringify(ids.map((id,i)=>({...by.get(id),ord:i})))});setSort(false)}
+  catch(e){alert('Gagal menyimpan susunan: '+e.message+'\nPastikan SQL penambahan kolom "ord" sudah dijalankan di Supabase.')}};
+let dr=null;const mg=$('#memGrid');
+mg.addEventListener('pointerdown',e=>{if(!mSort||e.button>0)return;const f=e.target.closest('.mem');if(!f)return;e.preventDefault();
+  const r=f.getBoundingClientRect();dr={f,ox:e.clientX-r.left,oy:e.clientY-r.top};f.classList.add('drag');f.setPointerCapture(e.pointerId)});
+mg.addEventListener('pointermove',e=>{if(!dr)return;const f=dr.f;f.style.transform='';
+  const t=document.elementsFromPoint(e.clientX,e.clientY).find(x=>x!==f&&x.classList.contains('mem'));
+  if(t){(f.compareDocumentPosition(t)&4)?t.after(f):t.before(f)}
+  const n=f.getBoundingClientRect();f.style.transform=`translate(${e.clientX-dr.ox-n.left}px,${e.clientY-dr.oy-n.top}px)`;
+  if(e.clientY<80)scrollBy(0,-14);else if(e.clientY>innerHeight-80)scrollBy(0,14)});
+['pointerup','pointercancel'].forEach(t=>mg.addEventListener(t,()=>{if(!dr)return;dr.f.classList.remove('drag');dr.f.style.transform='';dr=null}));
 $('#lb').addEventListener('click',()=>{$('#lb').hidden=true});
 addEventListener('keydown',e=>{if(e.key==='Escape')$('#lb').hidden=true});
 $('#mDate').value=new Date().toISOString().slice(0,10);
@@ -476,7 +496,7 @@ sc.addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.cl
 /* ===== LOGIN & AKSES ===== */
 async function enter(role){
   isAdmin=role==='admin';$('#login').hidden=true;$('#app').hidden=false;$('#mfab').hidden=false;
-  $('#navInput').hidden=!isAdmin;$('#memAdmin').hidden=!isAdmin;
+  $('#navInput').hidden=!isAdmin;$('#memAdmin').hidden=!isAdmin;$('#memTools').hidden=!isAdmin;
   await load();fit();all();
   const h=location.hash.slice(1);
   go(['achievement','outstanding','poor','perpn','kenangan','input'].includes(h)?h:'achievement');
